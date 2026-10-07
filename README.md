@@ -112,15 +112,10 @@ the sidebar after you moved spaces by hand.
 [ui.sidebar.spaces]
 row_gap = 0
 rows = [
-  [{ token = "$tag", bold = true, rules = [
-    { equals = "work", fg = "#89b4fa" },
-    { equals = "personal", fg = "#f5c2e7" },
-    { equals = "home", fg = "#a6e3a1" },
-  ] }],
   [
-    { token = "$rule_work", fg = "#89b4fa" },
-    { token = "$rule_personal", fg = "#f5c2e7" },
-    { token = "$rule_home", fg = "#a6e3a1" },
+    { token = "$head_work", fg = "#89b4fa" },
+    { token = "$head_personal", fg = "#f5c2e7" },
+    { token = "$head_home", fg = "#a6e3a1" },
   ],
   [{ token = "$pad" }],
   ["state_icon", "workspace"],
@@ -128,12 +123,11 @@ rows = [
 ]
 ```
 
-Each group is a tag row, a coloured divider, a little air, then its projects as
+A group is a header line at the left margin, a little air, then its projects as
 a name row and an indented branch row:
 
 ```text
- work
-   ────────────────────────
+ work ────────────────────
    ⠀
    ● acme-api
    main
@@ -141,27 +135,27 @@ a name row and an indented branch row:
    release/1.4
  · billing
    main
- personal
-   ────────────────────────
+ personal ────────────────
    ⠀
    ● garden-sensor
    main
 ```
 
-One consequence of Herdr's row layout: the first project of each group is
-indented two columns (its name and branch share that indent), because Herdr
-renders the first row of a space at column 2 and every later row at column 4 —
-and the tag, divider and air rows belong to that first space. A header cannot
-sit above a project without shifting it.
+Two consequences of Herdr's row layout: the first project of each group is
+indented two columns (the header and air rows belong to that space, and Herdr
+renders only a space's first row at the left margin), and a divider on its own
+row can never be flush — which is why the tag and the divider share one row.
 
-- `$rule_<tag>` carries the divider, one token per tag, so each group's rule can
-  use that group's colour. A tag without an entry here simply gets no divider;
-  add `{ token = "$rule_other", fg = "…" }` when you introduce a tag.
-- `border_width` in the plugin's `config.toml` (default `24`) sets the divider's
-  length and `0` disables it. Herdr clips a divider longer than the sidebar and
-  marks the cut with `…`, so keep it at or below the sidebar width.
-- `$pad` is a blank cell used for the row under the divider; drop that row for
-  the tightest layout, and add another one above the tag row for more air.
+- `$head_<tag>` is the tag plus its divider as one value, so Herdr draws no
+  separator between them. One token per tag, so each group's header takes that
+  group's colour.
+- `$rule_<tag>` is the divider on its own, for a two-row header where the
+  divider sits two columns in. Use one style or the other, not both.
+- `border_width` in the plugin's `config.toml` (default `24`) is the width of
+  the header line; the divider is shortened for longer tag names so every
+  header ends at the same column. `0` disables the line.
+- `$pad` is a blank cell used for the row under the header; drop that row for
+  the tightest layout, and add another one above the header for more air.
 
 ## Manual overrides
 
@@ -206,8 +200,8 @@ sending it.
 
 - Rules plus manual decisions resolve to one `$tag` per space; the token is
   reported with `herdr workspace report-metadata`, and styling stays in
-  `config.toml`. A group head also carries `$rule_<tag>` and `$pad` for its
-  border and the row below it.
+  `config.toml`. A group head also carries `$head_<tag>` (title plus divider),
+  `$rule_<tag>` (divider alone) and `$pad`.
 - Grouping sends one atomic `workspace.move_block` request over
   `HERDR_SOCKET_PATH` with the complete desired order.
 - Workspace tokens are display-only and are **not restored after a server

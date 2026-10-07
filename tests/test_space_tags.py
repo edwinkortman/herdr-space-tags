@@ -340,6 +340,15 @@ class BandTests(unittest.TestCase):
         self.assertEqual(tokens[space_tags.TOKEN], "my tag")
         self.assertEqual(tokens[space_tags.PAD_TOKEN], space_tags.PAD_VALUE)
         self.assertEqual(tokens["rule_my_tag"], space_tags.RULE_CHAR * 12)
+        self.assertEqual(
+            tokens["head_my_tag"],
+            "my tag " + space_tags.RULE_CHAR * (12 - len("my tag") - 1),
+        )
+
+    def test_head_token_keeps_one_width_for_every_tag(self):
+        for tag in ("bp", "cemit", "personal"):
+            header = space_tags.band_token_map(tag, 24)["head_" + tag]
+            self.assertEqual(len(header), 24)
 
     def test_band_token_map_is_empty_without_a_tag(self):
         self.assertEqual(space_tags.band_token_map(""), {})

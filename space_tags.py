@@ -42,6 +42,7 @@ PAD_TOKEN = "pad"
 AIR_TOKEN = "air"
 PAD_VALUE = "\u2800"  # braille pattern blank: a blank cell that still renders a row
 RULE_PREFIX = "rule_"
+HEAD_PREFIX = "head_"
 RULE_CHAR = "\u2500"  # box drawing
 DEFAULT_BORDER_WIDTH = 24  # fits the default sidebar without Herdr's ellipsis
 MAX_BORDER_WIDTH = 80  # token values are capped at 80 characters
@@ -451,17 +452,32 @@ def band_token_map(tag: str, border_width: int = DEFAULT_BORDER_WIDTH) -> Dict[s
     tokens = {TOKEN: tag, PAD_TOKEN: PAD_VALUE}
     if border_width > 0:
         tokens[rule_token_name(tag)] = RULE_CHAR * border_width
+        line = RULE_CHAR * max(4, border_width - len(tag) - 1)
+        tokens[head_token_name(tag)] = "{} {}".format(tag, line)
     return tokens
 
 
 def rule_token_name(tag: str) -> str:
-    """`rule_<tag>` so the border can carry the group's colour."""
+    """`rule_<tag>` for a divider row of its own."""
+    return RULE_PREFIX + tag_slug(tag)
+
+
+def head_token_name(tag: str) -> str:
+    """`head_<tag>` for a single row holding the tag and its divider."""
+    return HEAD_PREFIX + tag_slug(tag)
+
+
+def tag_slug(tag: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9_-]", "_", tag)[:MAX_TAG_LENGTH]
-    return RULE_PREFIX + (slug or "group")
+    return slug or "group"
 
 
 def owns_token(name: str) -> bool:
-    return name in (TOKEN, PAD_TOKEN, AIR_TOKEN) or name.startswith(RULE_PREFIX)
+    return (
+        name in (TOKEN, PAD_TOKEN)
+        or name.startswith(RULE_PREFIX)
+        or name.startswith(HEAD_PREFIX)
+    )
 
 
 def sync_bands(
