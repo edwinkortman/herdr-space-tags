@@ -137,6 +137,9 @@ sending it.
 
 ## Limits
 
+- Herdr 0.9.x does not list plugin actions in the workspace or pane right-click
+  menus: the manifest `contexts` field is not surfaced in the TUI yet, so
+  tagging is keybinding and CLI only.
 - The tag popup needs an interactive terminal; `herdr plugin action invoke`
   cannot pass a tag as an argument, hence the picker.
 - Every tagged space renders its own `$tag` row. Herdr renders sidebar rows per
