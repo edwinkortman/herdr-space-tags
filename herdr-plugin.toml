@@ -1,0 +1,48 @@
+id = "herdr-space-tags"
+name = "Herdr Space Tags"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Tag workspaces and group the spaces sidebar by tag."
+platforms = ["linux", "macos"]
+
+# Workspace tokens live on the server and are not restored after a restart,
+# so every kept tag is re-reported once the session is back.
+[[startup]]
+command = ["python3", "space_tags.py", "startup"]
+
+# A workspace opened for a project that was tagged before adopts its tag.
+[[events]]
+on = "workspace.created"
+command = ["python3", "space_tags.py", "workspace-created"]
+
+[[actions]]
+id = "tag"
+title = "Space tags: tag this space"
+contexts = ["workspace"]
+command = ["python3", "space_tags.py", "tag"]
+
+[[actions]]
+id = "untag"
+title = "Space tags: clear this space's tag"
+contexts = ["workspace"]
+command = ["python3", "space_tags.py", "untag"]
+
+[[actions]]
+id = "regroup"
+title = "Space tags: regroup spaces by tag"
+contexts = ["global"]
+command = ["python3", "space_tags.py", "regroup"]
+
+[[actions]]
+id = "apply"
+title = "Space tags: refresh tags on open spaces"
+contexts = ["global"]
+command = ["python3", "space_tags.py", "apply"]
+
+[[panes]]
+id = "picker"
+title = "Tag space"
+placement = "popup"
+width = "60%"
+height = 12
+command = ["python3", "space_tags.py", "picker"]
