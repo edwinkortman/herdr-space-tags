@@ -350,12 +350,22 @@ class BandTests(unittest.TestCase):
             header = space_tags.band_token_map(tag, 24)["head_" + tag]
             self.assertEqual(len(header), 24)
 
-    def test_band_token_map_is_empty_without_a_tag(self):
-        self.assertEqual(space_tags.band_token_map(""), {})
+    def test_band_token_map_pads_every_space(self):
+        self.assertEqual(
+            space_tags.band_token_map(""), {space_tags.PAD_TOKEN: space_tags.PAD_VALUE}
+        )
+
+    def test_band_token_map_gives_heads_air_and_a_spacer(self):
+        tokens = space_tags.band_token_map("work")
+        self.assertEqual(tokens[space_tags.PAD_TOKEN], space_tags.PAD_VALUE)
+        self.assertEqual(tokens[space_tags.AIR_TOKEN], space_tags.PAD_VALUE)
 
     def test_band_token_map_can_skip_the_rule(self):
         tokens = space_tags.band_token_map("work", 0)
-        self.assertEqual(sorted(tokens), [space_tags.PAD_TOKEN, space_tags.TOKEN])
+        self.assertEqual(
+            sorted(tokens),
+            [space_tags.AIR_TOKEN, space_tags.PAD_TOKEN, space_tags.TOKEN],
+        )
 
     def test_sync_bands_skips_unchanged_tokens(self):
         tokens = {
@@ -376,7 +386,7 @@ class BandTests(unittest.TestCase):
         }
         with Fixture(tokens={"w1": stale}) as fx:
             fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["alpha"]\n')
-            self.assertEqual(space_tags.sync_bands(), 1)
+            self.assertEqual(space_tags.sync_bands(), 3)
             args = fx.report_args_for("w1")
             self.assertEqual(args.count("--clear-token"), 2)
             self.assertIn("rule_cemit", args)
@@ -415,7 +425,7 @@ class ApplyTests(unittest.TestCase):
                 fx.reports(),
                 {"w1": ("token", "tag=work"), "w2": ("token", "tag=personal")},
             )
-            self.assertIn("2 of 3 space(s) tagged, 2 token(s) updated", out.getvalue())
+            self.assertIn("2 of 3 space(s) tagged, 3 token(s) updated", out.getvalue())
 
     def test_apply_clears_a_stale_token(self):
         with Fixture(tokens={"w3": "old"}) as fx:

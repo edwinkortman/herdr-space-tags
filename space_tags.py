@@ -441,15 +441,17 @@ def band_targets(
 
 
 def band_token_map(tag: str, border_width: int = DEFAULT_BORDER_WIDTH) -> Dict[str, str]:
-    """Tokens for one space: a tag row marker, plus the rule and its air.
+    """Tokens for one space: a spacer row, plus header tokens when it is a head.
 
-    The tag rides on the space's own first row. Herdr renders the first row of
-    an entry at column 2 and every later row at column 4, so a header above a
-    project would indent that one project relative to its siblings.
+    Every space carries the spacer. Herdr renders only a space's first row at
+    the left margin, so without it a project name sits two columns left of a
+    head project whose header pushes it onto a later row.
     """
+    tokens = {PAD_TOKEN: PAD_VALUE}
     if not tag:
-        return {}
-    tokens = {TOKEN: tag, PAD_TOKEN: PAD_VALUE}
+        return tokens
+    tokens[TOKEN] = tag
+    tokens[AIR_TOKEN] = PAD_VALUE
     if border_width > 0:
         tokens[rule_token_name(tag)] = RULE_CHAR * border_width
         line = RULE_CHAR * max(4, border_width - len(tag) - 1)
@@ -474,7 +476,7 @@ def tag_slug(tag: str) -> str:
 
 def owns_token(name: str) -> bool:
     return (
-        name in (TOKEN, PAD_TOKEN)
+        name in (TOKEN, PAD_TOKEN, AIR_TOKEN)
         or name.startswith(RULE_PREFIX)
         or name.startswith(HEAD_PREFIX)
     )

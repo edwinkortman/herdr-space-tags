@@ -1,6 +1,6 @@
 id = "herdr-space-tags"
 name = "Herdr Space Tags"
-version = "0.7.0"
+version = "0.8.0"
 min_herdr_version = "0.9.0"
 description = "Tag workspaces and group the spaces sidebar by tag."
 platforms = ["linux", "macos"]
