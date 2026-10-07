@@ -110,21 +110,22 @@ the sidebar after you moved spaces by hand.
 
 ```toml
 [ui.sidebar.spaces]
-row_gap = 1
+row_gap = 0
 rows = [
   [{ token = "$tag", bold = true, rules = [
     { equals = "work", fg = "#89b4fa" },
     { equals = "personal", fg = "#f5c2e7" },
     { equals = "home", fg = "#a6e3a1" },
   ] }],
-  ["state_icon", "workspace"],
-  [{ token = "branch", dim = true }, { token = "git_status", dim = true }],
+  ["state_icon", "workspace", { token = "branch", dim = true }, { token = "git_status", dim = true }],
 ]
 ```
 
-A space without a tag simply does not render the `$tag` row, so untagged
-spaces keep the compact two-row layout. Reload with `prefix+shift+r` or
-`herdr server reload-config`.
+With `band = "first"` a group costs one header row plus one row per space, so
+something like eleven spaces fits in about fourteen rows and untagged spaces
+render a single row. If the names truncate, widen the sidebar with
+`ui.sidebar_width`; `row_gap = 1` with a separate branch row gives the taller
+layout when you want more air.
 
 ## Manual overrides
 
