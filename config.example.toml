@@ -15,6 +15,11 @@ order = ["work", "personal", "home"]
 # sidebar reads as sections. Use "each" to label every tagged space.
 band = "first"
 
+# Length of the coloured rule under a group title, in characters. 0 disables
+# it. Keep it within the sidebar width; longer rules are clipped with an
+# ellipsis.
+border_width = 24
+
 # A space is tagged when its label or cwd matches one of the patterns.
 # The first matching rule in the file wins.
 [[rule]]

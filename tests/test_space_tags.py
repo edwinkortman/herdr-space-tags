@@ -60,9 +60,10 @@ SNAPSHOT = {
 def snapshot_with_tokens(tokens=None):
     snapshot = json.loads(json.dumps(SNAPSHOT))
     for workspace in snapshot["result"]["snapshot"]["workspaces"]:
-        tag = (tokens or {}).get(workspace["workspace_id"])
-        if tag is not None:
-            workspace["tokens"] = {"tag": tag}
+        value = (tokens or {}).get(workspace["workspace_id"])
+        if value is None:
+            continue
+        workspace["tokens"] = value if isinstance(value, dict) else {"tag": value}
     return snapshot
 
 
@@ -107,6 +108,12 @@ class Fixture:
         if not self.log.exists():
             return []
         return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def report_args_for(self, workspace_id):
+        for call in self.calls():
+            if call[:3] == ["workspace", "report-metadata", workspace_id]:
+                return call
+        return []
 
     def reports(self):
         """workspace_id -> ('token', 'tag=value') or ('clear', 'tag')."""
@@ -165,6 +172,18 @@ class ConfigTests(unittest.TestCase):
             fx.write("config.toml", 'band = "sideways"\n')
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(space_tags.load_config().band, "first")
+
+    def test_border_width_is_read_and_clamped(self):
+        with Fixture() as fx:
+            fx.write("config.toml", "border_width = 0\n")
+            self.assertEqual(space_tags.load_config().border_width, 0)
+        with Fixture() as fx:
+            fx.write("config.toml", "border_width = 999\n")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    space_tags.load_config().border_width,
+                    space_tags.DEFAULT_BORDER_WIDTH,
+                )
 
     def test_invalid_toml_raises(self):
         with Fixture() as fx:
@@ -312,11 +331,39 @@ class BandTests(unittest.TestCase):
             {"w1": "work", "w2": ""},
         )
 
+    def test_band_token_map_includes_padding_and_rule(self):
+        tokens = space_tags.band_token_map("my tag", 12)
+        self.assertEqual(tokens[space_tags.TOKEN], "my tag")
+        self.assertEqual(tokens[space_tags.PAD_TOKEN], space_tags.PAD_VALUE)
+        self.assertEqual(tokens["rule_my_tag"], space_tags.RULE_CHAR * 12)
+        self.assertEqual(space_tags.band_token_map(""), {})
+
+    def test_band_token_map_can_skip_the_rule(self):
+        tokens = space_tags.band_token_map("work", 0)
+        self.assertEqual(sorted(tokens), [space_tags.PAD_TOKEN, space_tags.TOKEN])
+
     def test_sync_bands_skips_unchanged_tokens(self):
-        with Fixture(tokens={"w1": "work"}) as fx:
+        with Fixture(tokens={"w1": space_tags.band_token_map("work")}) as fx:
             fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["alpha"]\n')
             self.assertEqual(space_tags.sync_bands(), 0)
             self.assertEqual(fx.reports(), {})
+
+    def test_sync_bands_clears_a_stale_rule_token(self):
+        stale = {
+            "tag": "cemit",
+            "pad": space_tags.PAD_VALUE,
+            "rule_cemit": space_tags.RULE_CHAR * space_tags.DEFAULT_BORDER_WIDTH,
+        }
+        with Fixture(tokens={"w1": stale}) as fx:
+            fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["alpha"]\n')
+            self.assertEqual(space_tags.sync_bands(), 1)
+            args = fx.report_args_for("w1")
+            self.assertEqual(args.count("--clear-token"), 2)
+            self.assertIn("rule_cemit", args)
+            self.assertIn("tag=work", args)
+            self.assertIn(
+                "rule_work=" + space_tags.RULE_CHAR * space_tags.DEFAULT_BORDER_WIDTH, args
+            )
 
     def test_sync_bands_moves_the_header_when_the_tag_changes(self):
         with Fixture(tokens={"w1": "work"}) as fx:

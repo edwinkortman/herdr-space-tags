@@ -112,20 +112,35 @@ the sidebar after you moved spaces by hand.
 [ui.sidebar.spaces]
 row_gap = 0
 rows = [
+  [{ token = "$pad" }],
   [{ token = "$tag", bold = true, rules = [
     { equals = "work", fg = "#89b4fa" },
     { equals = "personal", fg = "#f5c2e7" },
     { equals = "home", fg = "#a6e3a1" },
   ] }],
+  [
+    { token = "$rule_work", fg = "#89b4fa" },
+    { token = "$rule_personal", fg = "#f5c2e7" },
+    { token = "$rule_home", fg = "#a6e3a1" },
+  ],
+  [{ token = "$pad" }],
   ["state_icon", "workspace", { token = "branch", dim = true }, { token = "git_status", dim = true }],
 ]
 ```
 
-With `band = "first"` a group costs one header row plus one row per space, so
-something like eleven spaces fits in about fourteen rows and untagged spaces
-render a single row. If the names truncate, widen the sidebar with
-`ui.sidebar_width`; `row_gap = 1` with a separate branch row gives the taller
-layout when you want more air.
+That header block is: a blank row, the tag title, a coloured rule under it, and
+another blank row. It is written for the same spaces as the tag, so it appears
+once per group with `band = "first"` and on every tagged space with
+`band = "each"`.
+
+- `$rule_<tag>` carries the border, one token per tag, so each group's rule can
+  use that group's colour. A tag without an entry here simply gets no border;
+  add `{ token = "$rule_other", fg = "…" }` when you introduce a tag.
+- `border_width` in the plugin's `config.toml` (default `24`) sets the rule's
+  length and `0` disables it. Herdr clips a rule longer than the sidebar and
+  marks the cut with `…`, so keep it at or below the sidebar width.
+- `$pad` is a blank cell used for the spacing rows; drop those rows if you
+  prefer the tightest layout.
 
 ## Manual overrides
 
@@ -170,7 +185,8 @@ sending it.
 
 - Rules plus manual decisions resolve to one `$tag` per space; the token is
   reported with `herdr workspace report-metadata`, and styling stays in
-  `config.toml`.
+  `config.toml`. The group header also carries `$pad` and `$rule_<tag>` tokens
+  for its spacing and border.
 - Grouping sends one atomic `workspace.move_block` request over
   `HERDR_SOCKET_PATH` with the complete desired order.
 - Workspace tokens are display-only and are **not restored after a server
@@ -188,9 +204,11 @@ sending it.
   tagging is keybinding, config and CLI only.
 - The tag popup needs an interactive terminal; `herdr plugin action invoke`
   cannot pass a tag as an argument, hence the picker.
-- Every tagged space renders its own `$tag` row. Herdr renders sidebar rows per
-  space, so a single header for a whole group is not possible without
+- Every tagged space renders its own header rows. Herdr renders sidebar rows
+  per space, so a single header for a whole group is not possible without
   order-dependent bookkeeping.
+- The border is a text token, so a border longer than the sidebar is clipped
+  with `…`; keep `border_width` within the sidebar width.
 - Not supported on Windows (no Unix domain socket transport in this plugin).
 
 ## Development

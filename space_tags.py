@@ -23,6 +23,7 @@ import argparse
 import fnmatch
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -37,6 +38,12 @@ except ModuleNotFoundError:  # Python < 3.11
 PLUGIN_ID = "herdr-space-tags"
 SOURCE = "plugin:" + PLUGIN_ID
 TOKEN = "tag"
+PAD_TOKEN = "pad"
+PAD_VALUE = "\u2800"  # braille pattern blank: a blank cell that still renders a row
+RULE_PREFIX = "rule_"
+RULE_CHAR = "\u2500"  # box drawing
+DEFAULT_BORDER_WIDTH = 24  # fits the default sidebar without Herdr's ellipsis
+MAX_BORDER_WIDTH = 80  # token values are capped at 80 characters
 MAX_TAG_LENGTH = 24
 
 
@@ -63,6 +70,7 @@ class PluginConfig(NamedTuple):
     order: List[str]
     rules: List[Rule]
     band: str = "first"
+    border_width: int = DEFAULT_BORDER_WIDTH
 
 
 # --------------------------------------------------------------------- Herdr
@@ -150,15 +158,6 @@ def snapshot_state() -> Tuple[List[dict], Dict[str, str]]:
     return workspaces, cwds
 
 
-def report_args(workspace_id: str, tag: str) -> List[str]:
-    args = ["workspace", "report-metadata", workspace_id, "--source", SOURCE]
-    if tag:
-        args += ["--token", "{}={}".format(TOKEN, tag)]
-    else:
-        args += ["--clear-token", TOKEN]
-    return args
-
-
 # -------------------------------------------------------------------- config
 
 
@@ -221,6 +220,17 @@ def load_config() -> PluginConfig:
     if band not in ("first", "each"):
         warn('config.toml: band must be "first" or "each"; using "first"')
         band = "first"
+    border_width = data.get("border_width", DEFAULT_BORDER_WIDTH)
+    if isinstance(border_width, bool) or not isinstance(border_width, int):
+        warn("config.toml: border_width must be a number; using {}".format(DEFAULT_BORDER_WIDTH))
+        border_width = DEFAULT_BORDER_WIDTH
+    elif border_width < 0 or border_width > MAX_BORDER_WIDTH:
+        warn(
+            "config.toml: border_width must be between 0 and {}; using {}".format(
+                MAX_BORDER_WIDTH, DEFAULT_BORDER_WIDTH
+            )
+        )
+        border_width = DEFAULT_BORDER_WIDTH
     rules: List[Rule] = []
     for index, raw_rule in enumerate(raw_rules, 1):
         if not isinstance(raw_rule, dict):
@@ -236,7 +246,7 @@ def load_config() -> PluginConfig:
             warn("config.toml: rule {} has no labels or cwds".format(index))
             continue
         rules.append(Rule(tag, labels, cwds))
-    return PluginConfig(order, rules, band)
+    return PluginConfig(order, rules, band, border_width)
 
 
 def match_rules(label: str, cwd: str, rules: Sequence[Rule]) -> Optional[str]:
@@ -428,11 +438,31 @@ def band_targets(
     return targets
 
 
+def band_token_map(tag: str, border_width: int = DEFAULT_BORDER_WIDTH) -> Dict[str, str]:
+    """Tokens carried by a group header: title, padding and its rule line."""
+    if not tag:
+        return {}
+    tokens = {TOKEN: tag, PAD_TOKEN: PAD_VALUE}
+    if border_width > 0:
+        tokens[rule_token_name(tag)] = RULE_CHAR * border_width
+    return tokens
+
+
+def rule_token_name(tag: str) -> str:
+    """`rule_<tag>` so the border can carry the group's colour."""
+    slug = re.sub(r"[^A-Za-z0-9_-]", "_", tag)[:MAX_TAG_LENGTH]
+    return RULE_PREFIX + (slug or "group")
+
+
+def owns_token(name: str) -> bool:
+    return name in (TOKEN, PAD_TOKEN) or name.startswith(RULE_PREFIX)
+
+
 def sync_bands(
     workspaces: Optional[Sequence[dict]] = None,
     cwds: Optional[Dict[str, str]] = None,
 ) -> int:
-    """Write the band token for every space, skipping unchanged ones."""
+    """Write the band tokens for every space, skipping unchanged ones."""
     if workspaces is None or cwds is None:
         workspaces, cwds = snapshot_state()
     config = load_config()
@@ -441,11 +471,23 @@ def sync_bands(
     updated = 0
     for ws in workspaces:
         workspace_id = ws["workspace_id"]
-        current = (ws.get("tokens") or {}).get(TOKEN, "")
-        target = targets.get(workspace_id, "")
-        if current != target:
-            herdr_ok(*report_args(workspace_id, target))
-            updated += 1
+        desired = band_token_map(targets.get(workspace_id, ""), config.border_width)
+        current = {
+            name: value
+            for name, value in (ws.get("tokens") or {}).items()
+            if owns_token(name)
+        }
+        if current == desired:
+            continue
+        args = ["workspace", "report-metadata", workspace_id, "--source", SOURCE]
+        for name in sorted(current):
+            if desired.get(name) != current[name]:
+                args += ["--clear-token", name]
+        for name, value in desired.items():
+            if current.get(name) != value:
+                args += ["--token", "{}={}".format(name, value)]
+        herdr_ok(*args)
+        updated += 1
     return updated
 
 
