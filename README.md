@@ -7,20 +7,21 @@ Herdr has no built-in space grouping: the Spaces panel is a flat list, and the
 only grouping it knows is Git-worktree provenance. This plugin adds the missing
 pieces:
 
-- a **popup tag picker** bound to a keybinding,
+- a **`config.toml`** that tags projects declaratively by label or cwd,
 - a **`$tag` workspace token** rendered in the sidebar through the existing
   `ui.sidebar.spaces.rows` styling,
 - **real grouping**: spaces are reordered so that equal tags form one
   contiguous block, untagged spaces last,
-- **persistence**: tags survive server restarts (re-reported by a startup
-  hook) and closed-and-reopened projects adopt their old tag.
+- **manual overrides** (popup picker or CLI) for the exceptions,
+- **persistence**: tags survive server restarts, and closed-and-reopened
+  projects adopt their old tag.
 
 ## Requirements
 
 - Herdr 0.9.0 or newer (workspace metadata tokens: 0.7.4, `workspace.move_block`:
   0.8.0, sidebar value rules: 0.9.0). Linux and macOS only: grouping uses the
   Unix socket API directly, because `workspace.move_block` has no CLI wrapper.
-- Python 3.8+ (`python3` on `PATH`).
+- Python 3.11+ (`python3` on `PATH`); the config file is read with `tomllib`.
 
 ## Install
 
@@ -32,6 +33,37 @@ herdr plugin action invoke herdr-space-tags.apply   # re-apply tags now
 
 `[[startup]]` hooks do not run when a plugin is linked, so invoke `apply` once
 after linking; from then on tags are re-applied after every server restart.
+
+## Configuration
+
+Create `config.toml` in the plugin config directory
+(`herdr plugin config-dir herdr-space-tags` prints it):
+
+```toml
+# Sidebar group order, top to bottom. Tags not listed follow alphabetically;
+# untagged spaces stay last.
+order = ["work", "personal", "home"]
+
+# A space is tagged when its label or its cwd matches one of the patterns.
+# The first matching rule in the file wins.
+[[rule]]
+tag = "work"
+labels = ["klus", "helpdesk", "cemit-*"]
+cwds = ["~/Development/cemit/*"]
+
+[[rule]]
+tag = "personal"
+labels = ["fuckmyday*", "herdr-*"]
+```
+
+- `labels` are glob patterns matched against the workspace label,
+  case-insensitively. `*` matches any run of characters, `?` one.
+- `cwds` are glob patterns matched against the space's cwd (first pane),
+  `~` expanded, case-sensitive. A pattern without wildcards is an exact match.
+- Rules are evaluated on startup, when a space is created, and when a space is
+  renamed. After editing `config.toml`, run the `apply` action (or
+  `herdr plugin action invoke herdr-space-tags.apply`) to re-tag open spaces.
+- Colours live in Herdr's own `config.toml`, not here; see below.
 
 ## Keybindings
 
@@ -81,31 +113,27 @@ A space without a tag simply does not render the `$tag` row, so untagged
 spaces keep the compact two-row layout. Reload with `prefix+shift+r` or
 `herdr server reload-config`.
 
-## Group order
+## Manual overrides
 
-Groups are ordered by a plain text file:
+The picker and the `set` / `unset` / `reset` commands write manual decisions to
+`manual.tsv` next to `config.toml`. Manual decisions always win over rules:
+
+- `tag` / `set` — apply a tag.
+- `x` in the picker, or `unset` — **no tag**: the space stays untagged even
+  when a rule matches.
+- `r` in the picker, or `reset` — drop the manual decision and follow the
+  rules again.
+
+`manual.tsv` is also the closed-project memory. A project keeps its record
+after its workspace is closed, and a later workspace with the same cwd (or
+label) adopts the tag. The picker can find a workspace without a manual
+record; the file is hand-editable while Herdr runs:
 
 ```
-~/.config/herdr/plugins/config/herdr-space-tags/order.txt
-```
-
-One tag per line. Tags not listed there follow alphabetically after the listed
-ones, and untagged spaces always stay at the end.
-
-## Tags file
-
-Tags are stored in a tab-separated file next to it, editable by hand while
-Herdr runs (the next `apply` picks changes up):
-
-```
-~/.config/herdr/plugins/config/herdr-space-tags/tags.tsv
+~/.config/herdr/plugins/config/herdr-space-tags/manual.tsv
 # workspace_id	tag	cwd	label
 wB	work	/home/edwin/Development/fuckmyday.app	fuckmyday.app
 ```
-
-The `cwd` column is what lets a closed-and-reopened project keep its tag: a new
-workspace whose first pane uses a known cwd adopts that tag on
-`workspace.created`.
 
 ## Commands
 
@@ -115,8 +143,9 @@ The script also runs standalone, which is useful in scripts and tests:
 export HERDR_PLUGIN_CONFIG_DIR=~/.config/herdr/plugins/config/herdr-space-tags
 python3 space_tags.py list
 python3 space_tags.py set --workspace w1 --tag work
-python3 space_tags.py unset --workspace w1
-python3 space_tags.py apply        # same as the startup hook
+python3 space_tags.py unset --workspace w1     # explicit no tag
+python3 space_tags.py reset --workspace w1     # follow config rules
+python3 space_tags.py apply                    # same as the startup hook
 python3 space_tags.py regroup
 ```
 
@@ -125,13 +154,15 @@ sending it.
 
 ## How it works
 
-- Tags are reported as the `tag` display token with
-  `herdr workspace report-metadata`; styling stays in `config.toml`.
+- Rules plus manual decisions resolve to one `$tag` per space; the token is
+  reported with `herdr workspace report-metadata`, and styling stays in
+  `config.toml`.
 - Grouping sends one atomic `workspace.move_block` request over
   `HERDR_SOCKET_PATH` with the complete desired order.
 - Workspace tokens are display-only and are **not restored after a server
-  restart**, so the `[[startup]]` hook re-reports every kept tag. The same hook
-  re-adopts tags for projects that were closed while Herdr was running.
+  restart**, so the `[[startup]]` hook re-reports every tag. The
+  `workspace.created` and `workspace.renamed` hooks re-resolve rules for a
+  space that appears or is renamed.
 - Git-worktree checkouts are treated as one unit: they are moved together,
   parent first.
 
@@ -139,7 +170,7 @@ sending it.
 
 - Herdr 0.9.x does not list plugin actions in the workspace or pane right-click
   menus: the manifest `contexts` field is not surfaced in the TUI yet, so
-  tagging is keybinding and CLI only.
+  tagging is keybinding, config and CLI only.
 - The tag popup needs an interactive terminal; `herdr plugin action invoke`
   cannot pass a tag as an argument, hence the picker.
 - Every tagged space renders its own `$tag` row. Herdr renders sidebar rows per

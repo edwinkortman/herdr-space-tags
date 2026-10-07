@@ -2,13 +2,15 @@
 """Tag Herdr workspaces ("spaces") and group them by tag.
 
 Herdr renders a workspace's custom `$tag` metadata token in the Space sidebar
-rows. This plugin keeps that token in sync with a small tags file and groups
-tagged spaces by reordering workspaces through the `workspace.move_block`
+rows. This plugin keeps that token in sync with an optional config.toml
+(declarative rules per project) plus manual overrides from the tag picker, and
+groups tagged spaces by reordering workspaces through the `workspace.move_block`
 socket method, which has no CLI wrapper.
 
 Commands are invoked by the Herdr plugin manifest; they can also be run by hand:
 
     python3 space_tags.py set --workspace w1 --tag work
+    python3 space_tags.py reset --workspace w1     # follow config rules again
     python3 space_tags.py apply
     python3 space_tags.py regroup
 """
@@ -16,13 +18,19 @@ Commands are invoked by the Herdr plugin manifest; they can also be run by hand:
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import socket
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    tomllib = None
 
 PLUGIN_ID = "herdr-space-tags"
 SOURCE = "plugin:" + PLUGIN_ID
@@ -35,10 +43,23 @@ class SpaceTagsError(RuntimeError):
 
 
 class TagRecord(NamedTuple):
+    """A manual decision: a tag, or an empty tag to keep rules off."""
+
     workspace_id: str
     tag: str
     cwd: str
     label: str
+
+
+class Rule(NamedTuple):
+    tag: str
+    labels: List[str]
+    cwds: List[str]
+
+
+class PluginConfig(NamedTuple):
+    order: List[str]
+    rules: List[Rule]
 
 
 # --------------------------------------------------------------------- Herdr
@@ -135,7 +156,7 @@ def report_args(workspace_id: str, tag: str) -> List[str]:
     return args
 
 
-# ------------------------------------------------------------------- mapping
+# -------------------------------------------------------------------- config
 
 
 def config_dir() -> Path:
@@ -147,16 +168,93 @@ def config_dir() -> Path:
     return Path(value)
 
 
+def config_path() -> Path:
+    return config_dir() / "config.toml"
+
+
 def mapping_path() -> Path:
-    return config_dir() / "tags.tsv"
+    return config_dir() / "manual.tsv"
 
 
-def order_path() -> Path:
-    return config_dir() / "order.txt"
+def warn(message: str) -> None:
+    print("space-tags: warning: {}".format(message), file=sys.stderr)
 
 
 def sanitize(value: str) -> str:
     return " ".join(value.replace("\t", " ").split())
+
+
+def _patterns(value) -> List[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return [str(value)]
+    return [str(item) for item in value]
+
+
+def load_config() -> PluginConfig:
+    """Read the optional config.toml: sidebar group order and tagging rules."""
+    path = config_path()
+    if not path.exists():
+        return PluginConfig([], [])
+    if tomllib is None:
+        raise SpaceTagsError("config.toml needs Python 3.11+ (tomllib)")
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise SpaceTagsError("config.toml: {}".format(exc)) from exc
+
+    raw_order = data.get("order", [])
+    if not isinstance(raw_order, list):
+        warn("config.toml: order must be a list of tag names")
+        raw_order = []
+    order = [tag for tag in (sanitize(str(item)) for item in raw_order) if tag]
+
+    raw_rules = data.get("rule", [])
+    if not isinstance(raw_rules, list):
+        warn("config.toml: rule must be an array of tables")
+        raw_rules = []
+    rules: List[Rule] = []
+    for index, raw_rule in enumerate(raw_rules, 1):
+        if not isinstance(raw_rule, dict):
+            warn("config.toml: rule {} is not a table".format(index))
+            continue
+        tag = sanitize(str(raw_rule.get("tag", "")))
+        labels = _patterns(raw_rule.get("labels"))
+        cwds = _patterns(raw_rule.get("cwds"))
+        if not tag:
+            warn("config.toml: rule {} has no tag".format(index))
+            continue
+        if not labels and not cwds:
+            warn("config.toml: rule {} has no labels or cwds".format(index))
+            continue
+        rules.append(Rule(tag, labels, cwds))
+    return PluginConfig(order, rules)
+
+
+def match_rules(label: str, cwd: str, rules: Sequence[Rule]) -> Optional[str]:
+    """The first rule whose label glob (case-insensitive) or cwd glob matches."""
+    for rule in rules:
+        for pattern in rule.labels:
+            if fnmatch.fnmatchcase(label.casefold(), pattern.casefold()):
+                return rule.tag
+        for pattern in rule.cwds:
+            if cwd and fnmatch.fnmatchcase(cwd, os.path.expanduser(pattern)):
+                return rule.tag
+    return None
+
+
+def resolve_tag(
+    workspace_id: str,
+    label: str,
+    cwd: str,
+    manual: Dict[str, str],
+    rules: Sequence[Rule],
+) -> Optional[str]:
+    """Manual decisions win over rules; an empty manual tag suppresses rules."""
+    if workspace_id in manual:
+        return manual[workspace_id] or None
+    return match_rules(label, cwd, rules)
 
 
 def validate_tag(value: str) -> str:
@@ -179,7 +277,7 @@ def load_mapping() -> List[TagRecord]:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         fields = line.split("\t")
-        if len(fields) < 2 or not fields[0].strip() or not fields[1].strip():
+        if len(fields) < 2 or not fields[0].strip():
             continue
         cwd = fields[2].strip() if len(fields) > 2 else ""
         label = fields[3].strip() if len(fields) > 3 else ""
@@ -207,15 +305,10 @@ def save_mapping(records: Sequence[TagRecord]) -> None:
     tmp.replace(path)
 
 
-def tag_order(records: Sequence[TagRecord]) -> List[str]:
-    """Known tags: order.txt first when present, then the rest alphabetically."""
-    known: List[str] = []
-    if order_path().exists():
-        for line in order_path().read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and line not in known:
-                known.append(line)
-    for tag in sorted({record.tag for record in records}):
+def tag_order(order: Sequence[str], tags: Iterable[str]) -> List[str]:
+    """Configured order first, then any remaining tags alphabetically."""
+    known = list(order)
+    for tag in sorted({tag for tag in tags if tag}):
         if tag not in known:
             known.append(tag)
     return known
@@ -224,7 +317,7 @@ def tag_order(records: Sequence[TagRecord]) -> List[str]:
 def find_stale(
     records: Sequence[TagRecord], live_ids: set, cwd: str, label: str
 ) -> Optional[TagRecord]:
-    """A mapping whose workspace is closed, matched by project cwd then label."""
+    """A manual record whose workspace is closed, matched by project cwd then label."""
     stale = [record for record in records if record.workspace_id not in live_ids]
     if cwd:
         for record in stale:
@@ -260,9 +353,10 @@ def unit_groups(workspaces: Sequence[dict]) -> List[List[dict]]:
     return units
 
 
-def desired_order(workspaces: Sequence[dict], records: Sequence[TagRecord]) -> List[str]:
-    tags = {record.workspace_id: record.tag for record in records}
-    rank = {tag: index for index, tag in enumerate(tag_order(records))}
+def desired_order(
+    workspaces: Sequence[dict], tags: Dict[str, str], order: Sequence[str]
+) -> List[str]:
+    rank = {tag: index for index, tag in enumerate(tag_order(order, tags.values()))}
     units = unit_groups(workspaces)
 
     def unit_key(item: Tuple[int, List[dict]]):
@@ -274,21 +368,42 @@ def desired_order(workspaces: Sequence[dict], records: Sequence[TagRecord]) -> L
         if tag in rank:
             return (0, rank[tag], index)
         if tag:
-            return (1, tag, index)  # not in order.txt: after listed tags, alphabetical
+            return (1, tag, index)  # not in order: after listed tags, alphabetically
         return (2, "", index)  # untagged last
 
     ordered = [unit for _, unit in sorted(enumerate(units), key=unit_key)]
     return [ws["workspace_id"] for unit in ordered for ws in unit]
 
 
+def resolved_tags(
+    workspaces: Sequence[dict],
+    cwds: Dict[str, str],
+    records: Sequence[TagRecord],
+    config: PluginConfig,
+) -> Dict[str, str]:
+    manual = {record.workspace_id: record.tag for record in records}
+    return {
+        ws["workspace_id"]: resolve_tag(
+            ws["workspace_id"],
+            ws.get("label", ""),
+            cwds.get(ws["workspace_id"], ""),
+            manual,
+            config.rules,
+        )
+        or ""
+        for ws in workspaces
+    }
+
+
 def regroup() -> bool:
     """Reorder spaces so each tag forms one block. True when the order changed."""
-    workspaces, _ = snapshot_state()
-    records = load_mapping()
-    if not any(record.tag for record in records):
+    workspaces, cwds = snapshot_state()
+    config = load_config()
+    tags = resolved_tags(workspaces, cwds, load_mapping(), config)
+    if not any(tags.values()):
         return False
     current = [ws["workspace_id"] for ws in workspaces]
-    desired = desired_order(workspaces, records)
+    desired = desired_order(workspaces, tags, config.order)
     if desired == current:
         return False
     socket_request("workspace.move_block", {"workspace_ids": desired})
@@ -308,6 +423,26 @@ def live_context() -> dict:
         return {}
 
 
+def workspace_identity(workspace_id: str) -> Tuple[str, str]:
+    workspaces, cwds = snapshot_state()
+    for workspace in workspaces:
+        if workspace["workspace_id"] == workspace_id:
+            return workspace.get("label", ""), cwds.get(workspace_id, "")
+    return "", ""
+
+
+def refresh_workspace(workspace_id: str, label: str = "", cwd: str = "") -> Optional[str]:
+    """Resolve one workspace from manual decisions + rules and sync its token."""
+    if not label and not cwd:
+        label, cwd = workspace_identity(workspace_id)
+    config = load_config()
+    manual = {record.workspace_id: record.tag for record in load_mapping()}
+    tag = resolve_tag(workspace_id, label, cwd, manual, config.rules)
+    herdr_ok(*report_args(workspace_id, tag or ""))
+    regroup()
+    return tag
+
+
 def apply_tag(workspace_id: str, tag: str, cwd: str = "", label: str = "") -> None:
     records = [record for record in load_mapping() if record.workspace_id != workspace_id]
     records.append(TagRecord(workspace_id, validate_tag(tag), cwd, label))
@@ -316,18 +451,28 @@ def apply_tag(workspace_id: str, tag: str, cwd: str = "", label: str = "") -> No
     regroup()
 
 
-def clear_tag(workspace_id: str) -> None:
-    records = load_mapping()
-    remaining = [record for record in records if record.workspace_id != workspace_id]
-    if len(remaining) != len(records):
-        save_mapping(remaining)
+def clear_tag(workspace_id: str, cwd: str = "", label: str = "") -> None:
+    """Explicitly untag: remember the decision so config rules cannot re-tag it."""
+    records = [record for record in load_mapping() if record.workspace_id != workspace_id]
+    records.append(TagRecord(workspace_id, "", cwd, label))
+    save_mapping(records)
     herdr_ok(*report_args(workspace_id, ""))
     regroup()
 
 
+def reset_tag(workspace_id: str) -> None:
+    """Drop the manual decision and follow config rules again."""
+    records = load_mapping()
+    remaining = [record for record in records if record.workspace_id != workspace_id]
+    if len(remaining) != len(records):
+        save_mapping(remaining)
+    refresh_workspace(workspace_id)
+
+
 def apply_all() -> None:
-    """Re-report every known tag after a server restart or first link."""
+    """Re-report every tag after a restart or first link, following rules."""
     workspaces, cwds = snapshot_state()
+    config = load_config()
     records = load_mapping()
     live_ids = {ws["workspace_id"] for ws in workspaces}
     by_id = {record.workspace_id: record for record in records if record.workspace_id in live_ids}
@@ -354,38 +499,47 @@ def apply_all() -> None:
         records = [r for r in records if r.workspace_id not in claimed] + adopted
         save_mapping(records)
 
-    reported = 0
+    manual = {
+        record.workspace_id: record.tag
+        for record in records
+        if record.workspace_id in live_ids
+    }
+    tagged = 0
     for workspace in workspaces:
         workspace_id = workspace["workspace_id"]
-        record = by_id.get(workspace_id) or next(
-            (r for r in adopted if r.workspace_id == workspace_id), None
+        tag = resolve_tag(
+            workspace_id,
+            workspace.get("label", ""),
+            cwds.get(workspace_id, ""),
+            manual,
+            config.rules,
         )
-        if record is not None:
-            herdr_ok(*report_args(workspace_id, record.tag))
-            reported += 1
-    print("space-tags: {} tagged space(s) refreshed".format(reported))
+        herdr_ok(*report_args(workspace_id, tag or ""))
+        if tag:
+            tagged += 1
+    print("space-tags: {} of {} space(s) tagged".format(tagged, len(workspaces)))
 
 
-def workspace_created() -> None:
+def workspace_event() -> None:
+    """A space was created or renamed: adopt a known project, then re-resolve."""
     context = live_context()
     workspace_id = context.get("workspace_id")
     if not workspace_id:
         return
-    records = load_mapping()
-    if any(record.workspace_id == workspace_id for record in records):
-        return
-    workspaces, _ = snapshot_state()
-    live_ids = {ws["workspace_id"] for ws in workspaces}
-    cwd = context.get("workspace_cwd") or ""
     label = context.get("workspace_label") or ""
-    match = find_stale(records, live_ids, cwd, label)
-    if match is None:
-        return
-    remaining = [r for r in records if r.workspace_id != match.workspace_id]
-    remaining.append(TagRecord(workspace_id, match.tag, cwd or match.cwd, label or match.label))
-    save_mapping(remaining)
-    herdr_ok(*report_args(workspace_id, match.tag))
-    regroup()
+    cwd = context.get("workspace_cwd") or ""
+    records = load_mapping()
+    if not any(record.workspace_id == workspace_id for record in records):
+        workspaces, _ = snapshot_state()
+        live_ids = {ws["workspace_id"] for ws in workspaces}
+        match = find_stale(records, live_ids, cwd, label)
+        if match is not None:
+            remaining = [r for r in records if r.workspace_id != match.workspace_id]
+            remaining.append(
+                TagRecord(workspace_id, match.tag, cwd or match.cwd, label or match.label)
+            )
+            save_mapping(remaining)
+    refresh_workspace(workspace_id, label, cwd)
 
 
 # ------------------------------------------------------------------- picker
@@ -416,8 +570,10 @@ def picker() -> int:
     if not target:
         raise SpaceTagsError("no workspace to tag")
     records = load_mapping()
-    tags = tag_order(records)
-    current = next((r.tag for r in records if r.workspace_id == target), "")
+    config = load_config()
+    manual = {record.workspace_id: record.tag for record in records}
+    current = manual.get(target) or match_rules(label, cwd, config.rules) or ""
+    tags = tag_order(config.order, [record.tag for record in records])
 
     print("Tag space: {}".format(label or target))
     if current:
@@ -426,7 +582,9 @@ def picker() -> int:
         print("  {}. {}".format(index, tag))
     print("  n. new tag")
     if current:
-        print("  x. remove tag")
+        print("  x. no tag (rules off)")
+    if target in manual:
+        print("  r. follow config rules")
     print("  q. cancel")
 
     if not sys.stdin.isatty():
@@ -439,8 +597,12 @@ def picker() -> int:
     if choice in ("", "q", "Q"):
         return 0
     if choice in ("x", "X"):
-        clear_tag(target)
-        print("cleared tag on {}".format(label or target))
+        clear_tag(target, cwd, label)
+        print("no tag on {}".format(label or target))
+        return 0
+    if choice in ("r", "R"):
+        reset_tag(target)
+        print("{} follows config rules again".format(label or target))
         return 0
     if choice in ("n", "N"):
         new_tag = validate_tag(input("new tag: "))
@@ -459,19 +621,34 @@ def picker() -> int:
 
 
 def list_tags() -> int:
+    workspaces, cwds = snapshot_state()
+    config = load_config()
     records = load_mapping()
-    workspaces, _ = snapshot_state()
-    labels = {ws["workspace_id"]: ws.get("label", "") for ws in workspaces}
-    if not records:
-        print("space-tags: no tags yet")
-        return 0
-    for tag in tag_order(records):
-        for record in sorted(records, key=lambda r: r.label or r.workspace_id):
-            if record.tag != tag:
-                continue
-            label = labels.get(record.workspace_id) or record.label or record.workspace_id
-            live = "" if record.workspace_id in labels else " (closed)"
-            print("{}\t{}{}".format(tag, label, live))
+    manual = {record.workspace_id: record.tag for record in records}
+    live_ids = {ws["workspace_id"] for ws in workspaces}
+
+    rows = []
+    for workspace in workspaces:
+        workspace_id = workspace["workspace_id"]
+        tag = resolve_tag(
+            workspace_id,
+            workspace.get("label", ""),
+            cwds.get(workspace_id, ""),
+            manual,
+            config.rules,
+        )
+        source = "manual" if workspace_id in manual else ("rule" if tag else "")
+        rows.append((tag or "", workspace.get("label", workspace_id), source))
+    rank = {
+        tag: index
+        for index, tag in enumerate(tag_order(config.order, [row[0] for row in rows]))
+    }
+    rows.sort(key=lambda row: (rank.get(row[0], len(rank)), row[1]))
+    for tag, label, source in rows:
+        print("{}\t{}\t{}".format(tag or "-", label, source or "-"))
+    for record in sorted(records, key=lambda r: (r.tag, r.label)):
+        if record.workspace_id not in live_ids:
+            print("{}\t{}\t(closed)".format(record.tag or "-", record.label or record.workspace_id))
     return 0
 
 
@@ -497,6 +674,14 @@ def _unset_command(argv: Sequence[str]) -> int:
     return 0
 
 
+def _reset_command(argv: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(prog="space_tags.py reset")
+    parser.add_argument("--workspace", required=True)
+    args = parser.parse_args(list(argv))
+    reset_tag(args.workspace)
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -511,12 +696,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             workspace_id = context.get("workspace_id")
             if not workspace_id:
                 raise SpaceTagsError("no active workspace to untag")
-            clear_tag(workspace_id)
+            clear_tag(
+                workspace_id,
+                context.get("workspace_cwd") or "",
+                context.get("workspace_label") or "",
+            )
             return 0
         if command == "set":
             return _set_command(rest)
         if command == "unset":
             return _unset_command(rest)
+        if command == "reset":
+            return _reset_command(rest)
         if command in ("apply", "startup"):
             apply_all()
             return 0
@@ -528,8 +719,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return picker()
         if command == "list":
             return list_tags()
-        if command == "workspace-created":
-            workspace_created()
+        if command in ("workspace-created", "workspace-renamed"):
+            workspace_event()
             return 0
         raise SpaceTagsError("unknown command: {}".format(command))
     except SpaceTagsError as exc:

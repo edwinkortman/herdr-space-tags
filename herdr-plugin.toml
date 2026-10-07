@@ -1,6 +1,6 @@
 id = "herdr-space-tags"
 name = "Herdr Space Tags"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.9.0"
 description = "Tag workspaces and group the spaces sidebar by tag."
 platforms = ["linux", "macos"]
@@ -10,10 +10,15 @@ platforms = ["linux", "macos"]
 [[startup]]
 command = ["python3", "space_tags.py", "startup"]
 
-# A workspace opened for a project that was tagged before adopts its tag.
+# A workspace opened for a project that was tagged before adopts its tag, and
+# label rules are re-evaluated when a workspace is renamed.
 [[events]]
 on = "workspace.created"
 command = ["python3", "space_tags.py", "workspace-created"]
+
+[[events]]
+on = "workspace.renamed"
+command = ["python3", "space_tags.py", "workspace-renamed"]
 
 [[actions]]
 id = "tag"
