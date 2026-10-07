@@ -73,6 +73,12 @@ class PluginConfig(NamedTuple):
     rules: List[Rule]
     band: str = "first"
     border_width: int = DEFAULT_BORDER_WIDTH
+    sidebar_width: int = 30
+    auto_dock: bool = True
+    status_dot: bool = False
+    show_branch: bool = True
+    show_agents: bool = True
+    colors: Optional[Dict[str, str]] = None
 
 
 # --------------------------------------------------------------------- Herdr
@@ -248,7 +254,40 @@ def load_config() -> PluginConfig:
             warn("config.toml: rule {} has no labels or cwds".format(index))
             continue
         rules.append(Rule(tag, labels, cwds))
-    return PluginConfig(order, rules, band, border_width)
+    colors = _colors(data.get("colors"))
+    return PluginConfig(
+        order,
+        rules,
+        band,
+        border_width,
+        _bounded_int(data, "sidebar_width", 30, 12, 80),
+        bool(data.get("auto_dock", True)),
+        bool(data.get("status_dot", False)),
+        bool(data.get("show_branch", True)),
+        bool(data.get("show_agents", True)),
+        colors,
+    )
+
+
+def _bounded_int(data: dict, key: str, default: int, low: int, high: int) -> int:
+    value = data.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        warn("config.toml: {} must be {}..{}; using {}".format(key, low, high, default))
+        return default
+    return value
+
+
+def _colors(raw) -> Optional[Dict[str, str]]:
+    if not isinstance(raw, dict):
+        return None
+    colors: Dict[str, str] = {}
+    for name, value in raw.items():
+        text = str(value)
+        if re.fullmatch(r"#[0-9A-Fa-f]{6}", text):
+            colors[str(name)] = text
+        else:
+            warn("config.toml: colors.{} must be a #rrggbb value".format(name))
+    return colors or None
 
 
 def match_rules(label: str, cwd: str, rules: Sequence[Rule]) -> Optional[str]:
