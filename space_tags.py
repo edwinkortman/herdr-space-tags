@@ -5,7 +5,9 @@ Herdr renders a workspace's custom `$tag` metadata token in the Space sidebar
 rows. This plugin keeps that token in sync with an optional config.toml
 (declarative rules per project) plus manual overrides from the tag picker, and
 groups tagged spaces by reordering workspaces through the `workspace.move_block`
-socket method, which has no CLI wrapper.
+socket method, which has no CLI wrapper. With `band = "first"` (the default)
+only the first space of each group carries the token, so the sidebar reads as
+sections instead of repeating a label on every space.
 
 Commands are invoked by the Herdr plugin manifest; they can also be run by hand:
 
@@ -60,6 +62,7 @@ class Rule(NamedTuple):
 class PluginConfig(NamedTuple):
     order: List[str]
     rules: List[Rule]
+    band: str = "first"
 
 
 # --------------------------------------------------------------------- Herdr
@@ -214,6 +217,10 @@ def load_config() -> PluginConfig:
     if not isinstance(raw_rules, list):
         warn("config.toml: rule must be an array of tables")
         raw_rules = []
+    band = str(data.get("band", "first")).strip().lower()
+    if band not in ("first", "each"):
+        warn('config.toml: band must be "first" or "each"; using "first"')
+        band = "first"
     rules: List[Rule] = []
     for index, raw_rule in enumerate(raw_rules, 1):
         if not isinstance(raw_rule, dict):
@@ -229,7 +236,7 @@ def load_config() -> PluginConfig:
             warn("config.toml: rule {} has no labels or cwds".format(index))
             continue
         rules.append(Rule(tag, labels, cwds))
-    return PluginConfig(order, rules)
+    return PluginConfig(order, rules, band)
 
 
 def match_rules(label: str, cwd: str, rules: Sequence[Rule]) -> Optional[str]:
@@ -395,6 +402,53 @@ def resolved_tags(
     }
 
 
+def display_order(workspaces: Sequence[dict]) -> List[dict]:
+    """Spaces in the order the sidebar renders them (worktree parent first)."""
+    return [ws for unit in unit_groups(workspaces) for ws in unit]
+
+
+def band_targets(
+    workspaces: Sequence[dict], tags: Dict[str, str], band: str = "first"
+) -> Dict[str, str]:
+    """The `tag` token each space should carry.
+
+    "each" labels every tagged space; "first" shows the tag once per
+    contiguous block, so the sidebar reads as sections rather than labels.
+    """
+    if band == "each":
+        return {
+            ws["workspace_id"]: tags.get(ws["workspace_id"], "") for ws in workspaces
+        }
+    targets: Dict[str, str] = {}
+    previous = ""
+    for ws in display_order(workspaces):
+        tag = tags.get(ws["workspace_id"], "")
+        targets[ws["workspace_id"]] = tag if tag and tag != previous else ""
+        previous = tag
+    return targets
+
+
+def sync_bands(
+    workspaces: Optional[Sequence[dict]] = None,
+    cwds: Optional[Dict[str, str]] = None,
+) -> int:
+    """Write the band token for every space, skipping unchanged ones."""
+    if workspaces is None or cwds is None:
+        workspaces, cwds = snapshot_state()
+    config = load_config()
+    tags = resolved_tags(workspaces, cwds, load_mapping(), config)
+    targets = band_targets(workspaces, tags, config.band)
+    updated = 0
+    for ws in workspaces:
+        workspace_id = ws["workspace_id"]
+        current = (ws.get("tokens") or {}).get(TOKEN, "")
+        target = targets.get(workspace_id, "")
+        if current != target:
+            herdr_ok(*report_args(workspace_id, target))
+            updated += 1
+    return updated
+
+
 def regroup() -> bool:
     """Reorder spaces so each tag forms one block. True when the order changed."""
     workspaces, cwds = snapshot_state()
@@ -432,14 +486,14 @@ def workspace_identity(workspace_id: str) -> Tuple[str, str]:
 
 
 def refresh_workspace(workspace_id: str, label: str = "", cwd: str = "") -> Optional[str]:
-    """Resolve one workspace from manual decisions + rules and sync its token."""
+    """Resolve one workspace from manual decisions + rules and sync its band."""
     if not label and not cwd:
         label, cwd = workspace_identity(workspace_id)
     config = load_config()
     manual = {record.workspace_id: record.tag for record in load_mapping()}
     tag = resolve_tag(workspace_id, label, cwd, manual, config.rules)
-    herdr_ok(*report_args(workspace_id, tag or ""))
     regroup()
+    sync_bands()
     return tag
 
 
@@ -447,8 +501,8 @@ def apply_tag(workspace_id: str, tag: str, cwd: str = "", label: str = "") -> No
     records = [record for record in load_mapping() if record.workspace_id != workspace_id]
     records.append(TagRecord(workspace_id, validate_tag(tag), cwd, label))
     save_mapping(records)
-    herdr_ok(*report_args(workspace_id, tag))
     regroup()
+    sync_bands()
 
 
 def clear_tag(workspace_id: str, cwd: str = "", label: str = "") -> None:
@@ -456,8 +510,8 @@ def clear_tag(workspace_id: str, cwd: str = "", label: str = "") -> None:
     records = [record for record in load_mapping() if record.workspace_id != workspace_id]
     records.append(TagRecord(workspace_id, "", cwd, label))
     save_mapping(records)
-    herdr_ok(*report_args(workspace_id, ""))
     regroup()
+    sync_bands()
 
 
 def reset_tag(workspace_id: str) -> None:
@@ -472,7 +526,6 @@ def reset_tag(workspace_id: str) -> None:
 def apply_all() -> None:
     """Re-report every tag after a restart or first link, following rules."""
     workspaces, cwds = snapshot_state()
-    config = load_config()
     records = load_mapping()
     live_ids = {ws["workspace_id"] for ws in workspaces}
     by_id = {record.workspace_id: record for record in records if record.workspace_id in live_ids}
@@ -499,25 +552,15 @@ def apply_all() -> None:
         records = [r for r in records if r.workspace_id not in claimed] + adopted
         save_mapping(records)
 
-    manual = {
-        record.workspace_id: record.tag
-        for record in records
-        if record.workspace_id in live_ids
-    }
-    tagged = 0
-    for workspace in workspaces:
-        workspace_id = workspace["workspace_id"]
-        tag = resolve_tag(
-            workspace_id,
-            workspace.get("label", ""),
-            cwds.get(workspace_id, ""),
-            manual,
-            config.rules,
+    config = load_config()
+    tags = resolved_tags(workspaces, cwds, records, config)
+    tagged = sum(1 for tag in tags.values() if tag)
+    updated = sync_bands(workspaces, cwds)
+    print(
+        "space-tags: {} of {} space(s) tagged, {} token(s) updated".format(
+            tagged, len(workspaces), updated
         )
-        herdr_ok(*report_args(workspace_id, tag or ""))
-        if tag:
-            tagged += 1
-    print("space-tags: {} of {} space(s) tagged".format(tagged, len(workspaces)))
+    )
 
 
 def workspace_event() -> None:
@@ -713,7 +756,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0
         if command == "regroup":
             changed = regroup()
-            print("space-tags: {}".format("order updated" if changed else "order already grouped"))
+            updated = sync_bands()
+            print(
+                "space-tags: order {}, {} token(s) updated".format(
+                    "updated" if changed else "already grouped", updated
+                )
+            )
+            return 0
+        if command == "sync-bands":
+            sync_bands()
             return 0
         if command == "picker":
             return picker()

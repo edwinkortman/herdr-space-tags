@@ -1,6 +1,6 @@
 id = "herdr-space-tags"
 name = "Herdr Space Tags"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.9.0"
 description = "Tag workspaces and group the spaces sidebar by tag."
 platforms = ["linux", "macos"]
@@ -19,6 +19,20 @@ command = ["python3", "space_tags.py", "workspace-created"]
 [[events]]
 on = "workspace.renamed"
 command = ["python3", "space_tags.py", "workspace-renamed"]
+
+# A group header sits on the first space of a block, so it has to follow
+# manual moves, regroupings and closes.
+[[events]]
+on = "workspace.moved"
+command = ["python3", "space_tags.py", "sync-bands"]
+
+[[events]]
+on = "workspace.reordered"
+command = ["python3", "space_tags.py", "sync-bands"]
+
+[[events]]
+on = "workspace.closed"
+command = ["python3", "space_tags.py", "sync-bands"]
 
 [[actions]]
 id = "tag"

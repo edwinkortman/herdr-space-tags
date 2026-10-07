@@ -11,6 +11,10 @@
 # alphabetically; untagged spaces always stay last.
 order = ["work", "personal", "home"]
 
+# "first" (default) shows a tag once, on the first space of its block, so the
+# sidebar reads as sections. Use "each" to label every tagged space.
+band = "first"
+
 # A space is tagged when its label or cwd matches one of the patterns.
 # The first matching rule in the file wins.
 [[rule]]

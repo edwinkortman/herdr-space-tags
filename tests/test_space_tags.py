@@ -57,8 +57,19 @@ SNAPSHOT = {
 }
 
 
+def snapshot_with_tokens(tokens=None):
+    snapshot = json.loads(json.dumps(SNAPSHOT))
+    for workspace in snapshot["result"]["snapshot"]["workspaces"]:
+        tag = (tokens or {}).get(workspace["workspace_id"])
+        if tag is not None:
+            workspace["tokens"] = {"tag": tag}
+    return snapshot
+
+
 class Fixture:
-    def __init__(self, snapshot=SNAPSHOT):
+    def __init__(self, snapshot=None, tokens=None):
+        if snapshot is None:
+            snapshot = snapshot_with_tokens(tokens)
         self.dir = tempfile.TemporaryDirectory()
         root = Path(self.dir.name)
         self.config = root / "config"
@@ -143,6 +154,17 @@ class ConfigTests(unittest.TestCase):
                 config.rules,
                 [space_tags.Rule("work", ["alpha*"], ["/p/alpha"])],
             )
+
+    def test_band_defaults_to_first_and_falls_back_on_typos(self):
+        with Fixture():
+            self.assertEqual(space_tags.load_config().band, "first")
+        with Fixture() as fx:
+            fx.write("config.toml", 'band = "each"\n')
+            self.assertEqual(space_tags.load_config().band, "each")
+        with Fixture() as fx:
+            fx.write("config.toml", 'band = "sideways"\n')
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(space_tags.load_config().band, "first")
 
     def test_invalid_toml_raises(self):
         with Fixture() as fx:
@@ -252,8 +274,62 @@ class OrderingTests(unittest.TestCase):
         )
 
 
+class BandTests(unittest.TestCase):
+    def test_first_band_shows_once_per_block(self):
+        workspaces = SNAPSHOT["result"]["snapshot"]["workspaces"]
+        tags = {"w1": "work", "w2": "work", "w3": "work"}
+        self.assertEqual(
+            space_tags.band_targets(workspaces, tags, "first"),
+            {"w1": "work", "w2": "", "w3": ""},
+        )
+
+    def test_each_band_labels_every_space(self):
+        workspaces = SNAPSHOT["result"]["snapshot"]["workspaces"]
+        tags = {"w1": "work", "w2": "work", "w3": "work"}
+        self.assertEqual(
+            space_tags.band_targets(workspaces, tags, "each"),
+            {"w1": "work", "w2": "work", "w3": "work"},
+        )
+
+    def test_first_band_restarts_after_an_untagged_space(self):
+        workspaces = SNAPSHOT["result"]["snapshot"]["workspaces"]
+        tags = {"w1": "work", "w3": "work"}
+        self.assertEqual(
+            space_tags.band_targets(workspaces, tags, "first"),
+            {"w1": "work", "w2": "", "w3": "work"},
+        )
+
+    def test_first_band_lands_on_the_worktree_parent(self):
+        workspaces = [
+            {"workspace_id": "w2", "label": "child",
+             "worktree": {"repo_key": "r1", "is_linked_worktree": True}},
+            {"workspace_id": "w1", "label": "parent",
+             "worktree": {"repo_key": "r1", "is_linked_worktree": False}},
+        ]
+        tags = {"w1": "work", "w2": "work"}
+        self.assertEqual(
+            space_tags.band_targets(workspaces, tags, "first"),
+            {"w1": "work", "w2": ""},
+        )
+
+    def test_sync_bands_skips_unchanged_tokens(self):
+        with Fixture(tokens={"w1": "work"}) as fx:
+            fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["alpha"]\n')
+            self.assertEqual(space_tags.sync_bands(), 0)
+            self.assertEqual(fx.reports(), {})
+
+    def test_sync_bands_moves_the_header_when_the_tag_changes(self):
+        with Fixture(tokens={"w1": "work"}) as fx:
+            fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["beta"]\n')
+            self.assertEqual(space_tags.sync_bands(), 2)
+            self.assertEqual(
+                fx.reports(),
+                {"w1": ("clear", "tag"), "w2": ("token", "tag=work")},
+            )
+
+
 class ApplyTests(unittest.TestCase):
-    def test_apply_uses_rules_and_clears_the_rest(self):
+    def test_apply_writes_a_band_for_each_group(self):
         with Fixture() as fx:
             fx.write(
                 "config.toml",
@@ -265,13 +341,19 @@ class ApplyTests(unittest.TestCase):
                 space_tags.apply_all()
             self.assertEqual(
                 fx.reports(),
-                {
-                    "w1": ("token", "tag=work"),
-                    "w2": ("token", "tag=personal"),
-                    "w3": ("clear", "tag"),
-                },
+                {"w1": ("token", "tag=work"), "w2": ("token", "tag=personal")},
             )
-            self.assertIn("2 of 3 space(s) tagged", out.getvalue())
+            self.assertIn("2 of 3 space(s) tagged, 2 token(s) updated", out.getvalue())
+
+    def test_apply_clears_a_stale_token(self):
+        with Fixture(tokens={"w3": "old"}) as fx:
+            fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["alpha"]\n')
+            with contextlib.redirect_stdout(io.StringIO()):
+                space_tags.apply_all()
+            self.assertEqual(
+                fx.reports(),
+                {"w1": ("token", "tag=work"), "w3": ("clear", "tag")},
+            )
 
     def test_apply_manual_override_wins_over_rule(self):
         with Fixture() as fx:
@@ -283,7 +365,8 @@ class ApplyTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 space_tags.apply_all()
             self.assertEqual(fx.reports()["w1"], ("token", "tag=work"))
-            self.assertEqual(fx.reports()["w2"], ("clear", "tag"))
+            self.assertEqual(fx.reports()["w3"], ("token", "tag=work"))
+            self.assertNotIn("w2", fx.reports())
 
     def test_apply_adopts_stale_manual_record_by_cwd(self):
         with Fixture() as fx:
@@ -301,16 +384,18 @@ class ApplyTests(unittest.TestCase):
 
     def test_workspace_created_matches_rule(self):
         with Fixture() as fx:
-            fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["delta*"]\n')
+            fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["beta"]\n')
             os.environ["HERDR_PLUGIN_CONTEXT_JSON"] = json.dumps(
-                {"workspace_id": "w2", "workspace_cwd": "/p/beta", "workspace_label": "delta"}
+                {"workspace_id": "w2", "workspace_cwd": "/p/beta", "workspace_label": "beta"}
             )
             with contextlib.redirect_stdout(io.StringIO()):
                 space_tags.main(["workspace-created"])
             self.assertEqual(fx.reports()["w2"], ("token", "tag=work"))
 
     def test_workspace_renamed_re_resolves_rules(self):
-        with Fixture() as fx:
+        snapshot = json.loads(json.dumps(SNAPSHOT))
+        snapshot["result"]["snapshot"]["workspaces"][0]["label"] = "renamed-alpha"
+        with Fixture(snapshot=snapshot) as fx:
             fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["*renamed*"]\n')
             os.environ["HERDR_PLUGIN_CONTEXT_JSON"] = json.dumps(
                 {"workspace_id": "w1", "workspace_cwd": "/p/alpha",
@@ -369,7 +454,7 @@ class RegroupTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
-    def test_set_and_unset_report_and_clear(self):
+    def test_set_writes_a_token_and_the_manual_record(self):
         with Fixture() as fx:
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(
@@ -379,17 +464,19 @@ class CommandTests(unittest.TestCase):
                     ),
                     0,
                 )
+            self.assertEqual(fx.reports()["w1"], ("token", "tag=work"))
+            self.assertEqual(
+                [(r.workspace_id, r.tag) for r in space_tags.load_mapping()],
+                [("w1", "work")],
+            )
+
+    def test_unset_clears_the_token_and_suppresses_rules(self):
+        with Fixture(tokens={"w1": "work"}) as fx:
+            with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(
                     space_tags.main(["unset", "--workspace", "w1"]), 0
                 )
-            reports = fx.reports()
-            self.assertEqual(reports["w1"], ("clear", "tag"))
-            tokens = [
-                call for call in fx.calls()
-                if call[:2] == ["workspace", "report-metadata"]
-                and call[5] == "--token"
-            ]
-            self.assertEqual(tokens[0][6], "tag=work")
+            self.assertEqual(fx.reports()["w1"], ("clear", "tag"))
             self.assertEqual(
                 [record.tag for record in space_tags.load_mapping()], [""]
             )

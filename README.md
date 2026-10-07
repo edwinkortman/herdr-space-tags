@@ -45,6 +45,10 @@ is a commented starting point:
 # untagged spaces stay last.
 order = ["work", "personal", "home"]
 
+# "first" (default) shows a tag once, on the first space of its block, so the
+# sidebar reads as sections. Use "each" to label every tagged space.
+band = "first"
+
 # A space is tagged when its label or its cwd matches one of the patterns.
 # The first matching rule in the file wins.
 [[rule]]
@@ -68,6 +72,10 @@ labels = ["thermostat", "doorbell-*"]
 - Rules are evaluated on startup, when a space is created, and when a space is
   renamed. After editing `config.toml`, run the `apply` action (or
   `herdr plugin action invoke herdr-space-tags.apply`) to re-tag open spaces.
+- `band = "first"` (the default) puts the tag only on the first space of each
+  group, so the sidebar reads as sections instead of repeating a label on every
+  space. `band = "each"` labels every tagged space. The header follows manual
+  moves, regroupings and closes (the plugin listens for those events).
 - Colours live in Herdr's own `config.toml`, not here; see below.
 
 ## Keybindings
@@ -167,7 +175,8 @@ sending it.
 - Workspace tokens are display-only and are **not restored after a server
   restart**, so the `[[startup]]` hook re-reports every tag. The
   `workspace.created` and `workspace.renamed` hooks re-resolve rules for a
-  space that appears or is renamed.
+  space that appears or is renamed, and `workspace.moved` / `workspace.reordered`
+  / `workspace.closed` re-place the group header.
 - Git-worktree checkouts are treated as one unit: they are moved together,
   parent first.
 
