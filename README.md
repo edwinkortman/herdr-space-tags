@@ -112,26 +112,43 @@ the sidebar after you moved spaces by hand.
 [ui.sidebar.spaces]
 row_gap = 0
 rows = [
-  [{ token = "$pad" }],
   [{ token = "$tag", bold = true, rules = [
     { equals = "work", fg = "#89b4fa" },
     { equals = "personal", fg = "#f5c2e7" },
     { equals = "home", fg = "#a6e3a1" },
-  ] }],
+  ] }, "state_icon", "workspace"],
+  [{ token = "branch", dim = true }, { token = "git_status", dim = true }],
   [
     { token = "$rule_work", fg = "#89b4fa" },
     { token = "$rule_personal", fg = "#f5c2e7" },
     { token = "$rule_home", fg = "#a6e3a1" },
   ],
   [{ token = "$pad" }],
-  ["state_icon", "workspace", { token = "branch", dim = true }, { token = "git_status", dim = true }],
 ]
 ```
 
-That header block is: a blank row, the tag title, a coloured rule under it, and
-another blank row. It is written for the same spaces as the tag, so it appears
-once per group with `band = "first"` and on every tagged space with
-`band = "each"`.
+Every space renders as a name row plus an indented branch row. The tag rides on
+the first row of the group's first space, and the rows below that pair draw the
+group's border and a little air:
+
+```text
+ work · ● acme-api
+   main
+   ────────────────────────
+   ⠀
+ · acme-dashboard
+   release/1.4
+ · billing
+   main
+ personal · ● garden-sensor
+   main
+   ────────────────────────
+   ⠀
+```
+
+The tag sits on the project row rather than in rows above it because Herdr
+renders the first row of a space at column 2 and every later row at column 4: a
+header above the row would indent that one project relative to its siblings.
 
 - `$rule_<tag>` carries the border, one token per tag, so each group's rule can
   use that group's colour. A tag without an entry here simply gets no border;
@@ -139,8 +156,9 @@ once per group with `band = "first"` and on every tagged space with
 - `border_width` in the plugin's `config.toml` (default `24`) sets the rule's
   length and `0` disables it. Herdr clips a rule longer than the sidebar and
   marks the cut with `…`, so keep it at or below the sidebar width.
-- `$pad` is a blank cell used for the spacing rows; drop those rows if you
-  prefer the tightest layout.
+- `$pad` is a blank cell used for the row under the border; drop that row for
+  the tightest layout, or set `ui.status_indicators = "symbols"` if the dotted
+  state icons make the tag row look crowded.
 
 ## Manual overrides
 
@@ -185,8 +203,8 @@ sending it.
 
 - Rules plus manual decisions resolve to one `$tag` per space; the token is
   reported with `herdr workspace report-metadata`, and styling stays in
-  `config.toml`. The group header also carries `$pad` and `$rule_<tag>` tokens
-  for its spacing and border.
+  `config.toml`. A group head also carries `$rule_<tag>` and `$pad` for its
+  border and the row below it.
 - Grouping sends one atomic `workspace.move_block` request over
   `HERDR_SOCKET_PATH` with the complete desired order.
 - Workspace tokens are display-only and are **not restored after a server

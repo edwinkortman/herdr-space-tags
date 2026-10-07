@@ -39,6 +39,7 @@ PLUGIN_ID = "herdr-space-tags"
 SOURCE = "plugin:" + PLUGIN_ID
 TOKEN = "tag"
 PAD_TOKEN = "pad"
+AIR_TOKEN = "air"
 PAD_VALUE = "\u2800"  # braille pattern blank: a blank cell that still renders a row
 RULE_PREFIX = "rule_"
 RULE_CHAR = "\u2500"  # box drawing
@@ -439,7 +440,12 @@ def band_targets(
 
 
 def band_token_map(tag: str, border_width: int = DEFAULT_BORDER_WIDTH) -> Dict[str, str]:
-    """Tokens carried by a group header: title, padding and its rule line."""
+    """Tokens for one space: a tag row marker, plus the rule and its air.
+
+    The tag rides on the space's own first row. Herdr renders the first row of
+    an entry at column 2 and every later row at column 4, so a header above a
+    project would indent that one project relative to its siblings.
+    """
     if not tag:
         return {}
     tokens = {TOKEN: tag, PAD_TOKEN: PAD_VALUE}
@@ -455,7 +461,7 @@ def rule_token_name(tag: str) -> str:
 
 
 def owns_token(name: str) -> bool:
-    return name in (TOKEN, PAD_TOKEN) or name.startswith(RULE_PREFIX)
+    return name in (TOKEN, PAD_TOKEN, AIR_TOKEN) or name.startswith(RULE_PREFIX)
 
 
 def sync_bands(

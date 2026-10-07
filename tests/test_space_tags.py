@@ -116,13 +116,17 @@ class Fixture:
         return []
 
     def reports(self):
-        """workspace_id -> ('token', 'tag=value') or ('clear', 'tag')."""
+        """workspace_id -> ('token', 'tag=value') or ('clear', 'tag') for the title token."""
         found = {}
         for call in self.calls():
             if call[:2] != ["workspace", "report-metadata"]:
                 continue
-            action = "token" if call[5] == "--token" else "clear"
-            found[call[2]] = (action, call[6])
+            for index in range(5, len(call) - 1, 2):
+                flag, value = call[index], call[index + 1]
+                if flag == "--token" and value.startswith("tag="):
+                    found[call[2]] = ("token", value)
+                elif flag == "--clear-token" and value == "tag":
+                    found[call[2]] = ("clear", "tag")
         return found
 
     def write(self, name, content):
@@ -336,6 +340,8 @@ class BandTests(unittest.TestCase):
         self.assertEqual(tokens[space_tags.TOKEN], "my tag")
         self.assertEqual(tokens[space_tags.PAD_TOKEN], space_tags.PAD_VALUE)
         self.assertEqual(tokens["rule_my_tag"], space_tags.RULE_CHAR * 12)
+
+    def test_band_token_map_is_empty_without_a_tag(self):
         self.assertEqual(space_tags.band_token_map(""), {})
 
     def test_band_token_map_can_skip_the_rule(self):
@@ -343,7 +349,12 @@ class BandTests(unittest.TestCase):
         self.assertEqual(sorted(tokens), [space_tags.PAD_TOKEN, space_tags.TOKEN])
 
     def test_sync_bands_skips_unchanged_tokens(self):
-        with Fixture(tokens={"w1": space_tags.band_token_map("work")}) as fx:
+        tokens = {
+            "w1": space_tags.band_token_map("work"),
+            "w2": space_tags.band_token_map(""),
+            "w3": space_tags.band_token_map(""),
+        }
+        with Fixture(tokens=tokens) as fx:
             fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["alpha"]\n')
             self.assertEqual(space_tags.sync_bands(), 0)
             self.assertEqual(fx.reports(), {})
@@ -366,7 +377,12 @@ class BandTests(unittest.TestCase):
             )
 
     def test_sync_bands_moves_the_header_when_the_tag_changes(self):
-        with Fixture(tokens={"w1": "work"}) as fx:
+        tokens = {
+            "w1": space_tags.band_token_map("work"),
+            "w2": space_tags.band_token_map(""),
+            "w3": space_tags.band_token_map(""),
+        }
+        with Fixture(tokens=tokens) as fx:
             fx.write("config.toml", '[[rule]]\ntag = "work"\nlabels = ["beta"]\n')
             self.assertEqual(space_tags.sync_bands(), 2)
             self.assertEqual(
