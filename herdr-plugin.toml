@@ -1,6 +1,6 @@
 id = "herdr-space-tags"
 name = "Herdr Space Tags"
-version = "0.9.0"
+version = "0.8.0"
 min_herdr_version = "0.9.0"
 description = "Tag workspaces and group the spaces sidebar by tag."
 platforms = ["linux", "macos"]
@@ -9,10 +9,6 @@ platforms = ["linux", "macos"]
 # so every kept tag is re-reported once the session is back.
 [[startup]]
 command = ["python3", "space_tags.py", "startup"]
-
-# Dock the sidebar in the focused tab when the session comes back.
-[[startup]]
-command = ["python3", "sidebar.py", "ensure"]
 
 # A workspace opened for a project that was tagged before adopts its tag, and
 # label rules are re-evaluated when a workspace is renamed.
@@ -29,19 +25,6 @@ command = ["python3", "space_tags.py", "workspace-renamed"]
 [[events]]
 on = "workspace.moved"
 command = ["python3", "space_tags.py", "sync-bands"]
-
-# Keep a sidebar docked in whatever tab the user is looking at.
-[[events]]
-on = "tab.focused"
-command = ["python3", "sidebar.py", "ensure"]
-
-[[events]]
-on = "tab.created"
-command = ["python3", "sidebar.py", "ensure"]
-
-[[events]]
-on = "workspace.focused"
-command = ["python3", "sidebar.py", "ensure"]
 
 [[events]]
 on = "workspace.reordered"
@@ -82,23 +65,3 @@ placement = "popup"
 width = "60%"
 height = 12
 command = ["python3", "space_tags.py", "picker"]
-
-# The stand-alone sidebar: a left-docked pane that renders the tag-grouped
-# spaces list and the agents list, so the native sidebar can stay hidden.
-[[panes]]
-id = "sidebar"
-title = "Spaces"
-placement = "split"
-command = ["python3", "sidebar.py", "run"]
-
-[[actions]]
-id = "sidebar"
-title = "Spaces sidebar: open or close"
-contexts = ["global"]
-command = ["python3", "sidebar.py", "toggle"]
-
-[[actions]]
-id = "sidebar-close"
-title = "Spaces sidebar: close"
-contexts = ["global"]
-command = ["python3", "sidebar.py", "close"]

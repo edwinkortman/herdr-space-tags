@@ -165,51 +165,6 @@ headers, names and branches all sit in the same column.
   append `{ token = "state_icon" }` after `workspace` to keep it as a trailing
   marker.
 
-## Stand-alone sidebar
-
-The plugin can render its own sidebar instead of styling the native one: a
-left-docked pane with the tag-grouped spaces list, live branches and the agent
-list, free of the native row model's limits (no spacer rows, no braille
-padding, real headers, mouse clicks).
-
-```toml
-[[keys.command]]
-key = "prefix+alt+b"
-type = "plugin_action"
-command = "herdr-space-tags.sidebar"
-description = "spaces sidebar: open or close"
-```
-
-- `herdr-space-tags.sidebar` toggles it in the focused tab;
-  `herdr-space-tags.sidebar-close` closes it. Closing snoozes that tab for 12
-  hours, so the auto-dock does not put it straight back.
-- With `auto_dock = true` it re-docks itself in whichever tab you focus, one
-  pane per tab. `auto_dock = false` docks it only through the action.
-- To retire the native sidebar, set `ui.sidebar_collapsed_mode = "hidden"` and
-  `ui.sidebar_start_collapsed = true` in `~/.config/herdr/config.toml`, then
-  press `prefix+b` to collapse it now — it stays hidden after a restart.
-
-Sidebar settings live in the plugin's `config.toml`:
-
-```toml
-sidebar_width = 30   # columns for the docked pane
-auto_dock = true     # re-dock in the focused tab
-status_dot = false   # a coloured state dot per space
-show_branch = true   # branch (and ↑ahead/↓behind) under each name
-show_agents = true   # agents section below the spaces
-
-[colors]
-work = "#89b4fa"     # tag name and its header divider
-```
-
-Inside the pane: `j`/`k` or arrows move, Enter or a click focuses, `g`/`G` jump,
-`r` reloads, the wheel scrolls.
-
-Limits: one process per docked tab, because Herdr offers no sidebar placement
-for plugin panes ([issue #4312](https://github.com/herdrdev/herdr/issues/4312));
-it lists the local session's workspaces only (not saved SSH machines), and
-worktree children are not nested under their parent.
-
 ## Manual overrides
 
 The picker and the `set` / `unset` / `reset` commands write manual decisions to
