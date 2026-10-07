@@ -116,49 +116,52 @@ rows = [
     { equals = "work", fg = "#89b4fa" },
     { equals = "personal", fg = "#f5c2e7" },
     { equals = "home", fg = "#a6e3a1" },
-  ] }, "state_icon", "workspace"],
-  [{ token = "branch", dim = true }, { token = "git_status", dim = true }],
+  ] }],
   [
     { token = "$rule_work", fg = "#89b4fa" },
     { token = "$rule_personal", fg = "#f5c2e7" },
     { token = "$rule_home", fg = "#a6e3a1" },
   ],
   [{ token = "$pad" }],
+  ["state_icon", "workspace"],
+  [{ token = "branch", dim = true }, { token = "git_status", dim = true }],
 ]
 ```
 
-Every space renders as a name row plus an indented branch row. The tag rides on
-the first row of the group's first space, and the rows below that pair draw the
-group's border and a little air:
+Each group is a tag row, a coloured divider, a little air, then its projects as
+a name row and an indented branch row:
 
 ```text
- work · ● acme-api
-   main
+ work
    ────────────────────────
    ⠀
+   ● acme-api
+   main
  · acme-dashboard
    release/1.4
  · billing
    main
- personal · ● garden-sensor
-   main
+ personal
    ────────────────────────
    ⠀
+   ● garden-sensor
+   main
 ```
 
-The tag sits on the project row rather than in rows above it because Herdr
-renders the first row of a space at column 2 and every later row at column 4: a
-header above the row would indent that one project relative to its siblings.
+One consequence of Herdr's row layout: the first project of each group is
+indented two columns (its name and branch share that indent), because Herdr
+renders the first row of a space at column 2 and every later row at column 4 —
+and the tag, divider and air rows belong to that first space. A header cannot
+sit above a project without shifting it.
 
-- `$rule_<tag>` carries the border, one token per tag, so each group's rule can
-  use that group's colour. A tag without an entry here simply gets no border;
+- `$rule_<tag>` carries the divider, one token per tag, so each group's rule can
+  use that group's colour. A tag without an entry here simply gets no divider;
   add `{ token = "$rule_other", fg = "…" }` when you introduce a tag.
-- `border_width` in the plugin's `config.toml` (default `24`) sets the rule's
-  length and `0` disables it. Herdr clips a rule longer than the sidebar and
+- `border_width` in the plugin's `config.toml` (default `24`) sets the divider's
+  length and `0` disables it. Herdr clips a divider longer than the sidebar and
   marks the cut with `…`, so keep it at or below the sidebar width.
-- `$pad` is a blank cell used for the row under the border; drop that row for
-  the tightest layout, or set `ui.status_indicators = "symbols"` if the dotted
-  state icons make the tag row look crowded.
+- `$pad` is a blank cell used for the row under the divider; drop that row for
+  the tightest layout, and add another one above the tag row for more air.
 
 ## Manual overrides
 
