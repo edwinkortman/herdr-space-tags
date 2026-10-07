@@ -166,10 +166,10 @@ class ConfigTests(unittest.TestCase):
 
     def test_match_rules_label_case_insensitive_and_cwd_glob(self):
         rules = [
-            space_tags.Rule("work", ["cemit-*"], []),
+            space_tags.Rule("work", ["acme-*"], []),
             space_tags.Rule("personal", [], ["/p/*/beta"]),
         ]
-        self.assertEqual(space_tags.match_rules("CEMIT-admin", "", rules), "work")
+        self.assertEqual(space_tags.match_rules("ACME-admin", "", rules), "work")
         self.assertEqual(space_tags.match_rules("", "/p/x/beta", rules), "personal")
         self.assertIsNone(space_tags.match_rules("other", "/q/x/beta", rules))
 

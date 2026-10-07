@@ -37,7 +37,8 @@ after linking; from then on tags are re-applied after every server restart.
 ## Configuration
 
 Create `config.toml` in the plugin config directory
-(`herdr plugin config-dir herdr-space-tags` prints it):
+(`herdr plugin config-dir herdr-space-tags` prints it). [`config.example.toml`](config.example.toml)
+is a commented starting point:
 
 ```toml
 # Sidebar group order, top to bottom. Tags not listed follow alphabetically;
@@ -48,12 +49,16 @@ order = ["work", "personal", "home"]
 # The first matching rule in the file wins.
 [[rule]]
 tag = "work"
-labels = ["klus", "helpdesk", "cemit-*"]
-cwds = ["~/Development/cemit/*"]
+labels = ["acme-*", "atlas", "core-*"]
+cwds = ["~/code/acme/*"]
 
 [[rule]]
 tag = "personal"
-labels = ["fuckmyday*", "herdr-*"]
+labels = ["garden-*", "photo-dump", "notes"]
+
+[[rule]]
+tag = "home"
+labels = ["thermostat", "doorbell-*"]
 ```
 
 - `labels` are glob patterns matched against the workspace label,
@@ -132,7 +137,7 @@ record; the file is hand-editable while Herdr runs:
 ```
 ~/.config/herdr/plugins/config/herdr-space-tags/manual.tsv
 # workspace_id	tag	cwd	label
-wB	work	/home/edwin/Development/fuckmyday.app	fuckmyday.app
+w3	work	/home/you/code/acme-api	acme-api
 ```
 
 ## Commands
